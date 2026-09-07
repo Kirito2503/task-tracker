@@ -3,6 +3,8 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -20,10 +22,27 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
+    multipleStatements: true, // Позволяет выполнять весь init.sql за один запрос
     ssl: {
         rejectUnauthorized: false
     }
 });
+
+// Автоматическая инициализация структуры БД
+async function initDatabase() {
+    try {
+        const sqlPath = path.join(__dirname, 'init.sql');
+        if (fs.existsSync(sqlPath)) {
+            const sql = fs.readFileSync(sqlPath, 'utf8');
+            await pool.query(sql);
+            console.log('Таблицы базы данных успешно инициализированы.');
+        } else {
+            console.warn('Файл init.sql не найден, пропуск инициализации.');
+        }
+    } catch (err) {
+        console.error('Ошибка инициализации БД:', err.message);
+    }
+}
 
 // Middleware аутентификации по JWT
 const authenticateToken = (req, res, next) => {
@@ -240,5 +259,8 @@ module.exports = { app, calculateTaskUrgency, pool };
 
 if (require.main === module) {
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
+    app.listen(PORT, async () => {
+        console.log(`Сервер запущен на порту ${PORT}`);
+        await initDatabase();
+    });
 }
