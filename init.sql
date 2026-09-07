@@ -1,6 +1,3 @@
-CREATE DATABASE IF NOT EXISTS tasktracker;
-USE tasktracker;
-
 -- 1. Таблица пользователей
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,

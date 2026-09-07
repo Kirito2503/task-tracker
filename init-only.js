@@ -8,15 +8,16 @@ async function run() {
         if (fs.existsSync(sqlPath)) {
             const sql = fs.readFileSync(sqlPath, 'utf8');
             await pool.query(sql);
-            console.log('Таблицы базы данных успешно созданы!');
+            const [tables] = await pool.query('SHOW TABLES');
+            console.log(`Таблицы базы данных успешно созданы: ${tables.length}`);
         } else {
-            console.error('Файл init.sql не найден');
+            throw new Error('Файл init.sql не найден');
         }
     } catch (err) {
         console.error('Ошибка выполния SQL:', err.message);
+        process.exitCode = 1;
     } finally {
         await pool.end();
-        process.exit();
     }
 }
 

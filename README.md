@@ -70,3 +70,13 @@ npm test -- --runInBand
 ```
 
 В проекте есть 6 unit-тестов бизнес-логики срочности в [tests/business_logic.test.js](tests/business_logic.test.js).
+
+### Инициализация базы на Railway/Aiven
+
+Если MySQL-провайдер выдает базу `defaultdb`, задайте в Variables Railway значения подключения к этой базе (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME=defaultdb`). Затем в Railway Shell выполните:
+
+```bash
+node init-only.js
+```
+
+Ожидаемый результат: `Таблицы базы данных успешно созданы: 4`. После этого перезапустите сервис. `init.sql` не выбирает имя базы самостоятельно и создает таблицы в базе из `DB_NAME`, поэтому скрипт подходит и для `defaultdb`, и для локальной `tasktracker`.
