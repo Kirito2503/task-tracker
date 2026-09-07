@@ -11,6 +11,8 @@ app.use(express.json());
 app.use(express.static('public'));
 
 const SECRET_KEY = process.env.JWT_SECRET || 'fallback_secret';
+const TASK_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH'];
+const TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'];
 
 // Настройка подключения к MySQL
 const pool = mysql.createPool({
@@ -65,6 +67,25 @@ const requireRole = (role) => (req, res, next) => {
     next();
 };
 
+const isAdmin = (req) => req.user.role === 'ADMIN';
+
+const parseId = (value) => {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const canAccessOwnedResource = (req, ownerId) => isAdmin(req) || ownerId === req.user.id;
+
+const validateTaskFields = ({ priority, status }) => {
+    if (priority !== undefined && !TASK_PRIORITIES.includes(priority)) {
+        return 'Недопустимый приоритет задачи';
+    }
+    if (status !== undefined && !TASK_STATUSES.includes(status)) {
+        return 'Недопустимый статус задачи';
+    }
+    return null;
+};
+
 // ==========================================
 // БИЗНЕС-ЛОГИКА (Функция расчёта срочности)
 // ==========================================
@@ -88,7 +109,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     try {
         const hash = await bcrypt.hash(password, 10);
-        const userRole = role === 'ADMIN' ? 'ADMIN' : 'USER';
+        const userRole = 'USER';
         
         const [result] = await pool.execute(
             'INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)',
@@ -136,12 +157,13 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/projects', authenticateToken, async (req, res) => {
     const { title, description } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'Название проекта обязательно' });
     try {
         const [result] = await pool.execute(
             'INSERT INTO projects (title, description, owner_id) VALUES (?, ?, ?)',
-            [title, description, req.user.id]
+            [title.trim(), description || null, req.user.id]
         );
-        res.status(201).json({ id: result.insertId, title, description });
+        res.status(201).json({ id: result.insertId, title: title.trim(), description: description || null });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -165,6 +187,57 @@ app.get('/api/projects', authenticateToken, async (req, res) => {
     }
 });
 
+app.get('/api/projects/:id', authenticateToken, async (req, res) => {
+    const projectId = parseId(req.params.id);
+    if (!projectId) return res.status(400).json({ error: 'Некорректный ID проекта' });
+
+    try {
+        const [projects] = await pool.execute(
+            isAdmin(req)
+                ? 'SELECT * FROM projects WHERE id = ?'
+                : 'SELECT * FROM projects WHERE id = ? AND owner_id = ?',
+            isAdmin(req) ? [projectId] : [projectId, req.user.id]
+        );
+        if (projects.length === 0) return res.status(404).json({ error: 'Проект не найден' });
+        res.json(projects[0]);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/projects/:id', authenticateToken, async (req, res) => {
+    const projectId = parseId(req.params.id);
+    const { title, description } = req.body;
+    if (!projectId || !title) return res.status(400).json({ error: 'ID и название проекта обязательны' });
+
+    try {
+        const [projects] = await pool.execute('SELECT owner_id FROM projects WHERE id = ?', [projectId]);
+        if (projects.length === 0) return res.status(404).json({ error: 'Проект не найден' });
+        if (!canAccessOwnedResource(req, projects[0].owner_id)) return res.status(403).json({ error: 'Недостаточно прав' });
+
+        await pool.execute('UPDATE projects SET title = ?, description = ? WHERE id = ?', [title, description || null, projectId]);
+        res.json({ id: projectId, title, description: description || null });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/projects/:id', authenticateToken, async (req, res) => {
+    const projectId = parseId(req.params.id);
+    if (!projectId) return res.status(400).json({ error: 'Некорректный ID проекта' });
+
+    try {
+        const [projects] = await pool.execute('SELECT owner_id FROM projects WHERE id = ?', [projectId]);
+        if (projects.length === 0) return res.status(404).json({ error: 'Проект не найден' });
+        if (!canAccessOwnedResource(req, projects[0].owner_id)) return res.status(403).json({ error: 'Недостаточно прав' });
+
+        await pool.execute('DELETE FROM projects WHERE id = ?', [projectId]);
+        res.json({ message: 'Проект удален' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ==========================================
 // CRUD ДЛЯ ЗАДАЧ (С фильтрацией и бизнес-логикой)
 // ==========================================
@@ -172,6 +245,8 @@ app.get('/api/projects', authenticateToken, async (req, res) => {
 app.get('/api/tasks', authenticateToken, async (req, res) => {
     try {
         const { priority, status } = req.query;
+        const validationError = validateTaskFields({ priority, status });
+        if (validationError) return res.status(400).json({ error: validationError });
         let query = 'SELECT * FROM tasks WHERE 1=1';
         let params = [];
 
@@ -205,10 +280,31 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
     }
 });
 
+app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
+    const taskId = parseId(req.params.id);
+    if (!taskId) return res.status(400).json({ error: 'Некорректный ID задачи' });
+
+    try {
+        const [tasks] = await pool.execute(
+            isAdmin(req)
+                ? 'SELECT * FROM tasks WHERE id = ?'
+                : 'SELECT * FROM tasks WHERE id = ? AND assigned_to = ?',
+            isAdmin(req) ? [taskId] : [taskId, req.user.id]
+        );
+        if (tasks.length === 0) return res.status(404).json({ error: 'Задача не найдена' });
+        res.json({ ...tasks[0], urgency: calculateTaskUrgency(tasks[0].priority, tasks[0].status) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/tasks', authenticateToken, async (req, res) => {
     const { title, priority, project_id, assigned_to } = req.body;
+    const validationError = validateTaskFields({ priority });
+    if (!title || !project_id) return res.status(400).json({ error: 'Название и проект обязательны' });
+    if (validationError) return res.status(400).json({ error: validationError });
     try {
-        const targetUser = assigned_to || req.user.id;
+        const targetUser = isAdmin(req) ? (assigned_to || req.user.id) : req.user.id;
         const [result] = await pool.execute(
             'INSERT INTO tasks (title, priority, project_id, assigned_to) VALUES (?, ?, ?, ?)',
             [title, priority || 'MEDIUM', project_id, targetUser]
@@ -219,15 +315,42 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
     }
 });
 
+app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
+    const taskId = parseId(req.params.id);
+    const { title, priority, status, project_id, assigned_to } = req.body;
+    const validationError = validateTaskFields({ priority, status });
+    if (!taskId || !title || !project_id) return res.status(400).json({ error: 'ID, название и проект обязательны' });
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    try {
+        const [tasks] = await pool.execute('SELECT assigned_to FROM tasks WHERE id = ?', [taskId]);
+        if (tasks.length === 0) return res.status(404).json({ error: 'Задача не найдена' });
+        if (!isAdmin(req) && tasks[0].assigned_to !== req.user.id) return res.status(403).json({ error: 'Недостаточно прав' });
+
+        const targetUser = isAdmin(req) ? (assigned_to || req.user.id) : req.user.id;
+        await pool.execute(
+            'UPDATE tasks SET title = ?, priority = ?, status = ?, project_id = ?, assigned_to = ? WHERE id = ?',
+            [title, priority || 'MEDIUM', status || 'TODO', project_id, targetUser, taskId]
+        );
+        res.json({ id: taskId, title, priority: priority || 'MEDIUM', status: status || 'TODO', project_id, assigned_to: targetUser });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
     const { status } = req.body;
     const taskId = req.params.id;
+    const validationError = validateTaskFields({ status });
+    if (!validationError && !status) return res.status(400).json({ error: 'Статус обязателен' });
+    if (validationError) return res.status(400).json({ error: validationError });
 
     try {
-        const [oldTask] = await pool.execute('SELECT status FROM tasks WHERE id = ?', [taskId]);
+        const [oldTask] = await pool.execute('SELECT status, assigned_to FROM tasks WHERE id = ?', [taskId]);
         if (oldTask.length === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
+        if (!isAdmin(req) && oldTask[0].assigned_to !== req.user.id) return res.status(403).json({ error: 'Недостаточно прав' });
 
         const oldStatus = oldTask[0].status;
 

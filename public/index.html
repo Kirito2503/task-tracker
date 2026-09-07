@@ -54,6 +54,12 @@
         </div>
         <hr>
 
+        <h3>Создать проект</h3>
+        <div class="flex">
+            <input type="text" id="projectTitle" placeholder="Название проекта">
+            <button onclick="createProject()">Создать проект</button>
+        </div>
+
         <h3>Создать новую задачу</h3>
         <div class="form-group">
             <input type="text" id="taskTitle" placeholder="Название задачи">
@@ -64,7 +70,9 @@
                 <option value="MEDIUM" selected>Средний приоритет</option>
                 <option value="HIGH">Высокий приоритет</option>
             </select>
-            <input type="number" id="projectId" placeholder="ID проекта" value="1">
+            <select id="projectId">
+                <option value="">Сначала создайте проект</option>
+            </select>
         </div>
         <button onclick="createTask()">Добавить задачу</button>
 
@@ -79,7 +87,7 @@
             </select>
             <select id="filterStatus" onchange="loadTasks()">
                 <option value="">Все статусы</option>
-                <option value="NEW">NEW</option>
+                <option value="TODO">TODO</option>
                 <option value="IN_PROGRESS">IN_PROGRESS</option>
                 <option value="DONE">DONE</option>
             </select>
@@ -137,11 +145,12 @@
         }
     }
 
-    function showMain() {
+    async function showMain() {
         document.getElementById('authBlock').classList.add('hidden');
         document.getElementById('mainBlock').classList.remove('hidden');
         document.getElementById('userDisplay').innerText = userEmail;
         document.getElementById('roleDisplay').innerText = userRole;
+        await loadProjects();
         loadTasks();
     }
 
@@ -166,6 +175,11 @@
         const container = document.getElementById('taskList');
         container.innerHTML = '';
 
+        if (!res.ok) {
+            container.innerHTML = `<p style="color:#dc3545;">${dataError(tasks)}</p>`;
+            return;
+        }
+
         if (!Array.isArray(tasks) || tasks.length === 0) {
             container.innerHTML = '<p style="color: #777; margin-top: 15px;">Задачи не найдены.</p>';
             return;
@@ -179,13 +193,64 @@
                 <p>Приоритет: <b>${task.priority}</b> | Расчетный статус системы: <b>${task.urgency}</b></p>
                 <div>
                     Сменить статус:
-                    <button onclick="updateStatus(${task.id}, 'NEW')" style="width:auto;">NEW</button>
+                    <button onclick="updateStatus(${task.id}, 'TODO')" style="width:auto;">TODO</button>
                     <button onclick="updateStatus(${task.id}, 'IN_PROGRESS')" style="width:auto;">IN_PROGRESS</button>
                     <button onclick="updateStatus(${task.id}, 'DONE')" style="width:auto;">DONE</button>
+                    ${userRole === 'ADMIN' ? `<button onclick="deleteTask(${task.id})" style="width:auto; background:#dc3545;">Удалить</button>` : ''}
                 </div>
             `;
             container.appendChild(el);
         });
+    }
+
+    function dataError(data) {
+        return data && data.error ? data.error : 'Не удалось загрузить данные';
+    }
+
+    async function loadProjects() {
+        const res = await fetch('/api/projects', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const projects = await res.json();
+        const select = document.getElementById('projectId');
+        select.innerHTML = '';
+
+        if (!res.ok || !Array.isArray(projects) || projects.length === 0) {
+            select.innerHTML = '<option value="">Сначала создайте проект</option>';
+            return;
+        }
+
+        projects.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project.id;
+            option.textContent = project.title;
+            select.appendChild(option);
+        });
+    }
+
+    async function createProject() {
+        const title = document.getElementById('projectTitle').value.trim();
+        if (!title) {
+            alert('Введите название проекта');
+            return;
+        }
+
+        const res = await fetch('/api/projects', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ title })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(dataError(data));
+            return;
+        }
+
+        document.getElementById('projectTitle').value = '';
+        await loadProjects();
     }
 
     async function createTask() {
@@ -193,12 +258,12 @@
         const priority = document.getElementById('taskPriority').value;
         const project_id = document.getElementById('projectId').value;
 
-        if (!title) {
-            alert('Введите название задачи');
+        if (!title || !project_id) {
+            alert('Введите название задачи и создайте проект');
             return;
         }
 
-        await fetch('/api/tasks', {
+        const res = await fetch('/api/tasks', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -206,13 +271,18 @@
             },
             body: JSON.stringify({ title, priority, project_id: Number(project_id) })
         });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(dataError(data));
+            return;
+        }
 
         document.getElementById('taskTitle').value = '';
         loadTasks();
     }
 
     async function updateStatus(id, status) {
-        await fetch(`/api/tasks/${id}/status`, {
+        const res = await fetch(`/api/tasks/${id}/status`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -220,6 +290,26 @@
             },
             body: JSON.stringify({ status })
         });
+        if (!res.ok) {
+            const data = await res.json();
+            alert(dataError(data));
+            return;
+        }
+        loadTasks();
+    }
+
+    async function deleteTask(id) {
+        if (!confirm('Удалить эту задачу?')) return;
+
+        const res = await fetch(`/api/tasks/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(dataError(data));
+            return;
+        }
         loadTasks();
     }
 </script>
