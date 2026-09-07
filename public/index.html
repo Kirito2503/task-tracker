@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Tracker — Панель управления</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f4f6f9; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, button { width: 100%; padding: 10px; margin-top: 3px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background-color: #007bff; color: white; font-weight: bold; cursor: pointer; border: none; margin-top: 10px; }
+        button:hover { background-color: #0056b3; }
+        .flex { display: flex; gap: 10px; }
+        .card { padding: 15px; margin: 10px 0; border-radius: 6px; border-left: 6px solid #ccc; background: #fafafa; }
+        .CRITICAL { border-left-color: #dc3545; background-color: #fff5f5; }
+        .WARNING { border-left-color: #ffc107; background-color: #fffdf0; }
+        .REGULAR { border-left-color: #28a745; background-color: #f4fff5; }
+        .CLOSED { border-left-color: #6c757d; background-color: #f0f0f0; opacity: 0.7; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; color: white; background: #555; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Task Flow Tracker</h1>
+
+    <!-- Форма авторизации -->
+    <div id="authBlock">
+        <h2>Вход в систему</h2>
+        <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="authEmail" value="admin@test.com">
+        </div>
+        <div class="form-group">
+            <label>Пароль</label>
+            <input type="password" id="authPassword" value="123456">
+        </div>
+        <div class="flex">
+            <button onclick="login()">Войти</button>
+            <button onclick="register()" style="background-color: #28a745;">Зарегистрироваться</button>
+        </div>
+    </div>
+
+    <!-- Основной блок рабочей панели -->
+    <div id="mainBlock" class="hidden">
+        <div class="flex" style="justify-content: space-between; align-items: center;">
+            <p>Вы вошли как: <b id="userDisplay"></b> (<span id="roleDisplay"></span>)</p>
+            <button onclick="logout()" style="width: auto; background: #dc3545;">Выйти</button>
+        </div>
+        <hr>
+
+        <h3>Создать новую задачу</h3>
+        <div class="form-group">
+            <input type="text" id="taskTitle" placeholder="Название задачи">
+        </div>
+        <div class="flex">
+            <select id="taskPriority">
+                <option value="LOW">Низкий приоритет</option>
+                <option value="MEDIUM" selected>Средний приоритет</option>
+                <option value="HIGH">Высокий приоритет</option>
+            </select>
+            <input type="number" id="projectId" placeholder="ID проекта" value="1">
+        </div>
+        <button onclick="createTask()">Добавить задачу</button>
+
+        <hr>
+        <h3>Фильтры и список задач</h3>
+        <div class="flex">
+            <select id="filterPriority" onchange="loadTasks()">
+                <option value="">Все приоритеты</option>
+                <option value="LOW">LOW</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+            </select>
+        </div>
+
+        <div id="taskList"></div>
+    </div>
+</div>
+
+<script>
+    let token = localStorage.getItem('jwt_token') || '';
+    let userRole = localStorage.getItem('user_role') || '';
+    let userEmail = localStorage.getItem('user_email') || '';
+
+    if (token) showMain();
+
+    async function login() {
+        const email = document.getElementById('authEmail').value;
+        const password = document.getElementById('authPassword').value;
+
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            token = data.token;
+            userRole = data.role;
+            userEmail = data.email;
+            localStorage.setItem('jwt_token', token);
+            localStorage.setItem('user_role', userRole);
+            localStorage.setItem('user_email', userEmail);
+            showMain();
+        } else {
+            alert(data.error || 'Ошибка входа');
+        }
+    }
+
+    async function register() {
+        const email = document.getElementById('authEmail').value;
+        const password = document.getElementById('authPassword').value;
+
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, role: 'USER' })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert('Регистрация успешна! Теперь войдите.');
+        } else {
+            alert(data.error);
+        }
+    }
+
+    function showMain() {
+        document.getElementById('authBlock').classList.add('hidden');
+        document.getElementById('mainBlock').classList.remove('hidden');
+        document.getElementById('userDisplay').innerText = userEmail;
+        document.getElementById('roleDisplay').innerText = userRole;
+        loadTasks();
+    }
+
+    function logout() {
+        localStorage.clear();
+        location.reload();
+    }
+
+    async function loadTasks() {
+        const priority = document.getElementById('filterPriority').value;
+        let url = '/api/tasks';
+        if (priority) url += `?priority=${priority}`;
+
+        const res = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const tasks = await res.json();
+
+        const container = document.getElementById('taskList');
+        container.innerHTML = '';
+
+        tasks.forEach(task => {
+            const el = document.createElement('div');
+            el.className = `card ${task.urgency}`;
+            el.innerHTML = `
+                <h4>${task.title} <span class="badge">${task.status}</span></h4>
+                <p>Приоритет: <b>${task.priority}</b> | Расчетный статус системы: <b>${task.urgency}</b></p>
+                <div>
+                    Сменить статус:
+                    <button onclick="updateStatus(${task.id}, 'TODO')" style="width:auto;">TODO</button>
+                    <button onclick="updateStatus(${task.id}, 'IN_PROGRESS')" style="width:auto;">IN_PROGRESS</button>
+                    <button onclick="updateStatus(${task.id}, 'DONE')" style="width:auto;">DONE</button>
+                </div>
+            `;
+            container.appendChild(el);
+        });
+    }
+
+    async function createTask() {
+        const title = document.getElementById('taskTitle').value;
+        const priority = document.getElementById('taskPriority').value;
+        const project_id = document.getElementById('projectId').value;
+
+        await fetch('/api/tasks', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ title, priority, project_id })
+        });
+
+        document.getElementById('taskTitle').value = '';
+        loadTasks();
+    }
+
+    async function updateStatus(id, status) {
+        await fetch(`/api/tasks/${id}/status`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ status })
+        });
+        loadTasks();
+    }
+</script>
+
+</body>
+</html>
