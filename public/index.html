@@ -8,7 +8,7 @@
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #f4f6f9; margin: 0; padding: 20px; }
         .container { max-width: 900px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; }
+        h1, h2, h3 { color: #333; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input, select, button { width: 100%; padding: 10px; margin-top: 3px; border: 1px solid #ccc; border-radius: 4px; }
@@ -76,6 +76,12 @@
                 <option value="LOW">LOW</option>
                 <option value="MEDIUM">MEDIUM</option>
                 <option value="HIGH">HIGH</option>
+            </select>
+            <select id="filterStatus" onchange="loadTasks()">
+                <option value="">Все статусы</option>
+                <option value="NEW">NEW</option>
+                <option value="IN_PROGRESS">IN_PROGRESS</option>
+                <option value="DONE">DONE</option>
             </select>
         </div>
 
@@ -146,8 +152,11 @@
 
     async function loadTasks() {
         const priority = document.getElementById('filterPriority').value;
-        let url = '/api/tasks';
-        if (priority) url += `?priority=${priority}`;
+        const status = document.getElementById('filterStatus').value;
+        
+        let url = '/api/tasks?';
+        if (priority) url += `priority=${priority}&`;
+        if (status) url += `status=${status}&`;
 
         const res = await fetch(url, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -157,6 +166,11 @@
         const container = document.getElementById('taskList');
         container.innerHTML = '';
 
+        if (!Array.isArray(tasks) || tasks.length === 0) {
+            container.innerHTML = '<p style="color: #777; margin-top: 15px;">Задачи не найдены.</p>';
+            return;
+        }
+
         tasks.forEach(task => {
             const el = document.createElement('div');
             el.className = `card ${task.urgency}`;
@@ -165,7 +179,7 @@
                 <p>Приоритет: <b>${task.priority}</b> | Расчетный статус системы: <b>${task.urgency}</b></p>
                 <div>
                     Сменить статус:
-                    <button onclick="updateStatus(${task.id}, 'TODO')" style="width:auto;">TODO</button>
+                    <button onclick="updateStatus(${task.id}, 'NEW')" style="width:auto;">NEW</button>
                     <button onclick="updateStatus(${task.id}, 'IN_PROGRESS')" style="width:auto;">IN_PROGRESS</button>
                     <button onclick="updateStatus(${task.id}, 'DONE')" style="width:auto;">DONE</button>
                 </div>
@@ -179,13 +193,18 @@
         const priority = document.getElementById('taskPriority').value;
         const project_id = document.getElementById('projectId').value;
 
+        if (!title) {
+            alert('Введите название задачи');
+            return;
+        }
+
         await fetch('/api/tasks', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({ title, priority, project_id })
+            body: JSON.stringify({ title, priority, project_id: Number(project_id) })
         });
 
         document.getElementById('taskTitle').value = '';
